@@ -85,6 +85,14 @@ export class IntelHUD {
     this._summaryRequest = null;
     this._lastSummarySignature = '';
     this._summaryRevision = 0;
+    // Set once the AI-summary backend proves unavailable (404 = endpoint not
+    // deployed, e.g. static Vercel build; 501/503 = present but unconfigured,
+    // e.g. no OPENAI_API_KEY). When true we skip building summary context
+    // ENTIRELY — the context walk reverse-geocodes the viewport and queries
+    // Google Nearby Places (billable events), so geocoding to feed an endpoint
+    // that can't answer is pure quota waste. Re-probed fresh each page load, so
+    // adding the key later self-enables without a code change.
+    this._summaryBackendUnavailable = false;
     // One-shot guards so the very first summary lands immediately instead of
     // waiting for the 15s interval tick: B) swap the "Awaiting telemetry..."
     // placeholder for the deterministic line as soon as metrics exist, then
@@ -624,6 +632,14 @@ export class IntelHUD {
       this._setSummaryText(fallbackText, animate);
       return;
     }
+    // Backend already proven unavailable this session: show the deterministic
+    // line and skip _summaryContext() so no reverse-geocode / Nearby Places
+    // (billable Google events) fire for a summary that cannot be produced.
+    if (this._summaryBackendUnavailable) {
+      this._summaryDirty = false;
+      this._setSummaryText(fallbackText, animate);
+      return;
+    }
     if (!force && !this._summaryDirty) return;
 
     const revision = this._summaryRevision;
@@ -666,6 +682,12 @@ export class IntelHUD {
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.summary) {
+        // 404 (endpoint absent) / 501 / 503 (present but unconfigured) mean the
+        // summary can never be produced this session — latch it off so the next
+        // tick skips the billable context geocoding instead of retrying forever.
+        if (response.status === 404 || response.status === 501 || response.status === 503) {
+          this._summaryBackendUnavailable = true;
+        }
         throw new Error(data?.error || `HTTP ${response.status}`);
       }
       if (revision !== this._summaryRevision) return;
