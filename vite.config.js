@@ -7330,6 +7330,36 @@ function normalizeAisTimestamp(value) {
  * plugins, configures the dev server host/port, and exposes selected
  * API keys to the client as import.meta.env defines.
  */
+/**
+ * Build the full set of `/api/*` proxy plugins. Exported so a standalone
+ * server (server/index.mjs) can mount the exact same Connect middleware on an
+ * Express app for production hosting — the dev server and the deployed backend
+ * share one implementation.
+ */
+export function createProxyPlugins() {
+  return [
+    openSkyProxy(),
+    celestrakProxy(),
+    tomtomProxy(),
+    firmsProxy(),
+    rocketLaunchesProxy(),
+    terrainHeightsProxy(),
+    adsbdbProxy(),
+    overpassProxy(),
+    militaryInstallationsProxy(),
+    regionalBriefProxy(),
+    weatherEffectsProxy(),
+    cctvProxy(),
+    radioBrowserProxy(),
+    gbfsProxy(),
+    adsbLolProxy(),
+    aisLiveProxy(),
+    trackBackfillProxies(),
+    openAiRealtimeProxy(),
+    googlePlacesContextProxy(),
+  ];
+}
+
 export default defineConfig(({ mode }) => {
   // Load only this checkout's dotenv files. Shell/Keychain values still win,
   // and no sibling workspace is consulted implicitly.
@@ -7341,25 +7371,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       cesium(),
-      openSkyProxy(),
-      celestrakProxy(),
-      tomtomProxy(),
-      firmsProxy(),
-      rocketLaunchesProxy(),
-      terrainHeightsProxy(),
-      adsbdbProxy(),
-      overpassProxy(),
-      militaryInstallationsProxy(),
-      regionalBriefProxy(),
-      weatherEffectsProxy(),
-      cctvProxy(),
-      radioBrowserProxy(),
-      gbfsProxy(),
-      adsbLolProxy(),
-      aisLiveProxy(),
-      trackBackfillProxies(),
-      openAiRealtimeProxy(),
-      googlePlacesContextProxy(),
+      ...createProxyPlugins(),
     ],
     server: {
       host: env.HOST || 'localhost',

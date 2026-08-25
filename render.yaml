@@ -1,0 +1,36 @@
+# Render Blueprint for the God's Eye View live-data backend.
+# Deploys the always-on Express proxy server (server/index.mjs) that fronts
+# TomTom, OpenSky, AISStream, CelesTrak, Overpass, and the other live feeds.
+# The static frontend stays on Vercel and reaches this via a /api/* rewrite.
+services:
+  - type: web
+    name: gods-eye-view-backend
+    runtime: node
+    plan: free
+    # Install dev deps too (vite / vite-plugin-cesium / ws are imported by the
+    # shared proxy module) but skip Puppeteer's Chromium download — the backend
+    # never launches a browser.
+    buildCommand: npm install --include=dev
+    startCommand: npm run serve
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: "true"
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
+      # Lock CORS to the deployed frontend origin.
+      - key: ALLOWED_ORIGIN
+        value: https://gods-eye-view-konectu.vercel.app
+      # OpenSky works anonymously; force anon so a missing OAuth cred doesn't
+      # push the proxy into an auth path.
+      - key: OPENSKY_AUTH_MODE
+        value: anon
+      # Secrets — set these in the Render dashboard (sync:false keeps them out
+      # of source control).
+      - key: TOMTOM_API_KEY
+        sync: false
+      - key: AISSTREAM_API_KEY
+        sync: false
+      - key: FIRMS_MAP_KEY
+        sync: false
