@@ -137,6 +137,17 @@ const ADSBLOL_POINT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 // the viewport-scoped adsb.lol source is more honest and keeps local motion
 // current instead of coasting a stale worldwide frame indefinitely.
 const OPENSKY_SOURCE_STALE_MS = 120_000;
+// Bound the OpenSky upstream fetch: without this the connection can hang for
+// ~20 s from hosts whose IP OpenSky silently drops (e.g. cloud datacenters),
+// stalling every poll before the adsb.lol regional fallback can engage.
+const OPENSKY_UPSTREAM_TIMEOUT_MS = 6000;
+// Hard bypass for environments where OpenSky is permanently unreachable
+// (datacenter IPs are blocked). When set, the proxy skips the OpenSky attempt
+// entirely and serves the adsb.lol regional snapshot around the view anchor —
+// no wasted per-poll timeout. Local dev leaves this unset and uses OpenSky.
+function isOpenSkyUpstreamDisabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.OPENSKY_DISABLE_UPSTREAM || '').trim());
+}
 // ---------------------------------------------------------------------------
 // Overpass API proxy constants and cache state
 // ---------------------------------------------------------------------------
@@ -2915,6 +2926,22 @@ function openSkyProxy() {
         try {
           const requestedMode = normalizeOpenSkyAuthMode(process.env.OPENSKY_AUTH_MODE);
           const now = Date.now();
+          // Production bypass: OpenSky is unreachable here (blocked datacenter
+          // IP). Skip it and serve the adsb.lol regional snapshot directly so
+          // aircraft appear without a per-poll upstream timeout.
+          if (isOpenSkyUpstreamDisabled()) {
+            if (await serveAdsbLolPointFallback(req, res, requestedMode, 'opensky_upstream_disabled_regional_fallback')) {
+              return;
+            }
+            res.writeHead(200, buildOpenSkyHeaders({
+              cacheStatus: 'MISS',
+              requestedMode,
+              usedMode: 'adsblol-regional',
+              reason: 'opensky_upstream_disabled_no_anchor',
+            }));
+            res.end(JSON.stringify({ time: Math.floor(now / 1000), states: [] }));
+            return;
+          }
           const inCooldown = now < _openskyCooldownUntil;
           // Fresh-enough cache (adaptive TTL) OR any cache during a 429
           // cooldown: serve it without touching upstream. Stale-during-cooldown
@@ -3006,7 +3033,10 @@ function openSkyProxy() {
             }
           }
 
-          let upstream = await fetch('https://opensky-network.org/api/states/all?extended=1', { headers });
+          let upstream = await fetch('https://opensky-network.org/api/states/all?extended=1', {
+            headers,
+            signal: AbortSignal.timeout(OPENSKY_UPSTREAM_TIMEOUT_MS),
+          });
           // Auto-mode fallback: if OAuth was rejected, retry with Basic credentials
           if (
             (upstream.status === 401 || upstream.status === 403) &&
@@ -3018,7 +3048,10 @@ function openSkyProxy() {
               Accept: 'application/json',
               Authorization: `Basic ${Buffer.from(`${basicUser}:${basicPass}`).toString('base64')}`,
             };
-            upstream = await fetch('https://opensky-network.org/api/states/all?extended=1', { headers: retryHeaders });
+            upstream = await fetch('https://opensky-network.org/api/states/all?extended=1', {
+              headers: retryHeaders,
+              signal: AbortSignal.timeout(OPENSKY_UPSTREAM_TIMEOUT_MS),
+            });
             usedMode = 'basic';
             reason = 'oauth_rejected_fallback_basic';
           }

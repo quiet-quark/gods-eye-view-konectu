@@ -22,8 +22,12 @@ services:
       # Lock CORS to the deployed frontend origin.
       - key: ALLOWED_ORIGIN
         value: https://gods-eye-view-konectu.vercel.app
-      # OpenSky works anonymously; force anon so a missing OAuth cred doesn't
-      # push the proxy into an auth path.
+      # OpenSky silently drops Render's datacenter IP (neither anon nor OAuth
+      # reach it), so skip the upstream entirely and serve the adsb.lol
+      # regional snapshot around the view anchor. Aircraft appear without a
+      # per-poll upstream timeout. Local dev leaves this unset and uses OpenSky.
+      - key: OPENSKY_DISABLE_UPSTREAM
+        value: "true"
       - key: OPENSKY_AUTH_MODE
         value: anon
       # Secrets — set these in the Render dashboard (sync:false keeps them out
