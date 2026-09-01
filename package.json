@@ -34,6 +34,7 @@
   "scripts": {
     "dev": "vite",
     "serve": "node server/index.mjs",
+    "refresh-tle": "node scripts/refresh-tle.mjs",
     "dev:secure": "./scripts/dev-secure.sh",
     "opensky:import": "./scripts/opensky-import-client.sh",
     "build": "vite build",
