@@ -17,7 +17,13 @@ const OUT_DIR = path.join(__dirname, '..', 'data', 'tle');
 
 // The exact path segments the client requests via /api/celestrak/<group>.
 // (src/data/satellites.js: CATALOG_GROUPS[].path + DENSE_GROUP_PATH)
-const GROUPS = ['stations', 'visual', 'gps-ops', 'glo-ops', 'galileo', 'geo', 'starlink'];
+// starlink is fetched FIRST: it's the bulk group CelesTrak 403s when it arrives
+// after a burst of other requests, so it gets the freshest rate-limit budget.
+const GROUPS = ['starlink', 'stations', 'visual', 'gps-ops', 'glo-ops', 'galileo', 'geo'];
+
+// Space requests out — CelesTrak throttles rapid back-to-back GROUP pulls.
+const REQUEST_SPACING_MS = 4000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const UA = 'gods-eye-view-celestrak-proxy/1.0 (+https://github.com/quiet-quark/gods-eye-view-konectu)';
 
@@ -38,7 +44,9 @@ async function fetchGroup(group) {
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
   let failures = 0;
-  for (const group of GROUPS) {
+  for (let i = 0; i < GROUPS.length; i += 1) {
+    const group = GROUPS[i];
+    if (i > 0) await sleep(REQUEST_SPACING_MS);
     try {
       const body = await fetchGroup(group);
       const count = (body.match(/^1 /gm) || []).length;
