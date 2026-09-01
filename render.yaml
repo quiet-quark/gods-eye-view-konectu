@@ -28,6 +28,11 @@ services:
       # per-poll upstream timeout. Local dev leaves this unset and uses OpenSky.
       - key: OPENSKY_DISABLE_UPSTREAM
         value: "true"
+      # CelesTrak (Cloudflare) also blocks Render's datacenter IP, so skip the
+      # doomed live TLE fetch and serve the committed data/tle snapshot
+      # (refreshed via `npm run refresh-tle`). Local dev leaves this unset.
+      - key: CELESTRAK_DISABLE_UPSTREAM
+        value: "true"
       - key: OPENSKY_AUTH_MODE
         value: anon
       # Secrets — set these in the Render dashboard (sync:false keeps them out

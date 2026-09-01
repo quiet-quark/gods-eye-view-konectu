@@ -1548,6 +1548,22 @@ function celestrakProxy() {
     return { at: Date.now(), body };
   }
 
+  // Committed TLE snapshot (data/tle/<group>.tle), refreshed by
+  // scripts/refresh-tle.mjs from an unblocked host. Serves as the datacenter
+  // fallback: CelesTrak (Cloudflare) drops Render's IP, so the live fetch never
+  // succeeds there. Setting CELESTRAK_DISABLE_UPSTREAM=true skips the doomed
+  // live fetch entirely and serves the snapshot directly.
+  const SNAPSHOT_DIR = path.join(process.cwd(), 'data', 'tle');
+  const snapshotDisabled = () =>
+    /^(1|true|yes|on)$/i.test(String(process.env.CELESTRAK_DISABLE_UPSTREAM || '').trim());
+  async function readSnapshot(group) {
+    try {
+      const body = await fsp.readFile(path.join(SNAPSHOT_DIR, `${group}.tle`), 'utf8');
+      if (/^1 /m.test(body)) return body;
+    } catch { /* no bundled snapshot for this group (e.g. optional dense starlink) */ }
+    return null;
+  }
+
   return {
     name: 'celestrak-proxy',
     configureServer(server) {
@@ -1568,6 +1584,21 @@ function celestrakProxy() {
         };
         try {
           const now = Date.now();
+          // Datacenter bypass: skip the CelesTrak fetch that can't succeed here
+          // and serve the committed snapshot. Groups without a snapshot (the
+          // optional dense starlink feed) degrade to an empty-but-valid body.
+          if (snapshotDisabled()) {
+            let snap = mem.get(group);
+            if (!snap) {
+              const body = await readSnapshot(group);
+              if (body) {
+                snap = { at: now, body };
+                mem.set(group, snap);
+              }
+            }
+            send(200, snap ? snap.body : '', snap ? 'SNAPSHOT' : 'SNAPSHOT-EMPTY');
+            return;
+          }
           let entry = mem.get(group);
           if (!entry) {
             entry = await readDisk(group);
@@ -1597,7 +1628,15 @@ function celestrakProxy() {
           } else if (entry) {
             send(200, entry.body, 'STALE-ERROR'); // upstream down — stale beats empty
           } else {
-            send(502, 'celestrak fetch failed and no cache available', 'NONE');
+            // No live data and no runtime cache: fall back to the committed
+            // snapshot before giving up, so a blocked host still shows sats.
+            const snapshot = await readSnapshot(group);
+            if (snapshot) {
+              mem.set(group, { at: now, body: snapshot });
+              send(200, snapshot, 'SNAPSHOT-FALLBACK');
+            } else {
+              send(502, 'celestrak fetch failed and no cache available', 'NONE');
+            }
           }
         } catch (err) {
           send(500, `celestrak proxy error: ${err?.message || err}`, 'ERROR');
