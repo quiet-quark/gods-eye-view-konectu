@@ -153,16 +153,16 @@ function isOpenSkyUpstreamDisabled() {
 // ---------------------------------------------------------------------------
 /** Ordered list of Overpass API mirrors; tried sequentially on failure/rate-limit. */
 const OVERPASS_UPSTREAMS = [
-  // Reordered 2026-09-02 for the Render deploy: the main overpass-api.de /
-  // lz4 instances throttle datacenter egress IPs (deployed /api/overpass 502'd
-  // while the same query worked from a residential IP), so lead with the
-  // community mirrors that accept cloud IPs. kumi.systems removed — dead
-  // (timed out even from a clean residential IP on 2026-09-01).
-  // Community full-planet instance (privateforge nonprofit) — added 2026-07-30
-  // when the main mirrors refused this IP. Verified: planet coverage (Texas
-  // query), CORS *, ~5-20 s cold latency, and accepts datacenter egress.
+  // Reordered 2026-09-02 for the Render deploy. Diagnosed from Render's egress
+  // IP: overpass-api.de + lz4 return ECONNREFUSED (they hard-ban datacenter
+  // IPs — not a throttle), overpass.osm.jp's TLS cert is expired, and
+  // private.coffee accepts the IP but is globally flaky (500/502/timeout).
+  // overpass.osm.ch (Swiss OSM — a different operator, so not under the
+  // overpass-api.de ban) is alive and fast, so it leads. kumi.systems removed
+  // (dead). The banned mainline instances stay last as a cheap ~350 ms
+  // ECONNREFUSED fallthrough in case the ban is ever lifted.
+  'https://overpass.osm.ch/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.osm.jp/api/interpreter',
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
 ];
