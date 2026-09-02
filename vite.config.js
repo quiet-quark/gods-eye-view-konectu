@@ -2664,7 +2664,12 @@ function overpassProxy() {
             });
             out.push({ u, status: r.status, ms: Date.now() - t0 });
           } catch (e) {
-            out.push({ u, error: String(e), ms: Date.now() - t0 });
+            out.push({
+              u,
+              error: String(e),
+              cause: e?.cause ? { code: e.cause.code, msg: String(e.cause.message || e.cause) } : null,
+              ms: Date.now() - t0,
+            });
           }
         }
         res.setHeader('Content-Type', 'application/json');
