@@ -2646,36 +2646,6 @@ function overpassProxy() {
   return {
     name: 'overpass-proxy',
     configureServer(server) {
-      // TEMPORARY diagnostic (added 2026-09-02) — probes each mirror FROM the
-      // deploy host so we can see which Overpass instances accept our egress
-      // IP. Registered before /api/overpass because Connect matches by prefix.
-      // Remove once the mirror list is confirmed working from Render.
-      server.middlewares.use('/api/overpass/diag', async (_req, res) => {
-        const q = 'data=[out:json][timeout:25];(way["highway"~"^primary$"](30.26,-97.75,30.28,-97.73););out geom qt;';
-        const out = [];
-        for (const u of OVERPASS_UPSTREAMS) {
-          const t0 = Date.now();
-          try {
-            const r = await fetch(u, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: q,
-              signal: AbortSignal.timeout(25000),
-            });
-            out.push({ u, status: r.status, ms: Date.now() - t0 });
-          } catch (e) {
-            out.push({
-              u,
-              error: String(e),
-              cause: e?.cause ? { code: e.cause.code, msg: String(e.cause.message || e.cause) } : null,
-              ms: Date.now() - t0,
-            });
-          }
-        }
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(out, null, 2));
-      });
-
       server.middlewares.use('/api/overpass', async (req, res) => {
         // Hoisted out of the try so the catch's serve-stale lookup can see it
         // (a body-read failure would otherwise hit an out-of-scope reference).
