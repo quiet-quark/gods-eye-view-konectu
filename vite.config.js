@@ -155,13 +155,20 @@ function isOpenSkyUpstreamDisabled() {
 const OVERPASS_UPSTREAMS = [
   // Reordered 2026-09-02 for the Render deploy. Diagnosed from Render's egress
   // IP: overpass-api.de + lz4 return ECONNREFUSED (they hard-ban datacenter
-  // IPs — not a throttle), overpass.osm.jp's TLS cert is expired, and
-  // private.coffee accepts the IP but is globally flaky (500/502/timeout).
-  // overpass.osm.ch (Swiss OSM — a different operator, so not under the
-  // overpass-api.de ban) is alive and fast, so it leads. kumi.systems removed
-  // (dead). The banned mainline instances stay last as a cheap ~350 ms
-  // ECONNREFUSED fallthrough in case the ban is ever lifted.
-  'https://overpass.osm.ch/api/interpreter',
+  // IPs — not a throttle), overpass.osm.jp's TLS cert is expired, kumi.systems
+  // is dead, and private.coffee accepts the IP but is globally flaky
+  // (500/502/timeout). CRITICAL: overpass.osm.ch answers 200 fast but is a
+  // EUROPE-ONLY instance — it returns an EMPTY result set outside Europe
+  // (Austin → 272-byte empty envelope), which read on the site as "ON but no
+  // dots". Worse, an empty 200 counts as success here and would be CACHED for
+  // 24 h (7 days on disk), poisoning every non-Europe view — so osm.ch is
+  // removed entirely, not kept as a fallback.
+  // overpass.openstreetmap.fr (OSM France — full planet, a different operator
+  // from the banned overpass-api.de) leads: full-planet, fast (~1.6 s, 198
+  // Austin ways, stable across retries). private.coffee (full-planet but
+  // globally flaky) is the next fallback; the banned mainline instances stay
+  // last as a cheap ~350 ms ECONNREFUSED fallthrough if the ban ever lifts.
+  'https://overpass.openstreetmap.fr/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
