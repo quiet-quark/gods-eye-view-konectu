@@ -153,14 +153,18 @@ function isOpenSkyUpstreamDisabled() {
 // ---------------------------------------------------------------------------
 /** Ordered list of Overpass API mirrors; tried sequentially on failure/rate-limit. */
 const OVERPASS_UPSTREAMS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://lz4.overpass-api.de/api/interpreter',
+  // Reordered 2026-09-02 for the Render deploy: the main overpass-api.de /
+  // lz4 instances throttle datacenter egress IPs (deployed /api/overpass 502'd
+  // while the same query worked from a residential IP), so lead with the
+  // community mirrors that accept cloud IPs. kumi.systems removed — dead
+  // (timed out even from a clean residential IP on 2026-09-01).
   // Community full-planet instance (privateforge nonprofit) — added 2026-07-30
-  // when all three mirrors above refused this IP (likely a dev-traffic rate
-  // ban; refused connections fail in ms, so healthy mirrors above still win).
-  // Verified: planet coverage (Texas query), CORS *, ~5-20 s cold latency.
+  // when the main mirrors refused this IP. Verified: planet coverage (Texas
+  // query), CORS *, ~5-20 s cold latency, and accepts datacenter egress.
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
 ];
 /**
  * TTL for FRESH cached Overpass responses (ms). Road geometry is static for
@@ -183,8 +187,14 @@ const OVERPASS_DISK_TTL_MS = 7 * 86_400_000;
 const OVERPASS_BOUNDARY_DISK_TTL_MS = 30 * 86_400_000;
 /** Disk-cache directory for Overpass responses. */
 const OVERPASS_DISK_DIR = path.join(process.cwd(), '.gev-cache', 'overpass');
-/** Per-upstream fetch timeout (ms). */
-const OVERPASS_TIMEOUT_MS = 22000;
+/**
+ * Per-upstream fetch timeout (ms). Lowered from 22 s on 2026-09-02: a mirror
+ * that throttles our datacenter egress IP hangs to this ceiling, and at 22 s
+ * two hung mirrors (44 s) blew past the fronting proxy's request budget before
+ * a healthy mirror was ever reached. A responsive mirror answers in <7 s, so
+ * 8 s fails over fast while still tolerating a cold community instance.
+ */
+const OVERPASS_TIMEOUT_MS = 8000;
 /** Max entries in the Overpass response cache (LRU-like, oldest evicted first). */
 const OVERPASS_CACHE_MAX_ENTRIES = 120;
 /** @type {Map<string,{status:number,body:string,contentType:string,endpoint:string,cachedAt:number}>} */
@@ -2636,6 +2646,31 @@ function overpassProxy() {
   return {
     name: 'overpass-proxy',
     configureServer(server) {
+      // TEMPORARY diagnostic (added 2026-09-02) — probes each mirror FROM the
+      // deploy host so we can see which Overpass instances accept our egress
+      // IP. Registered before /api/overpass because Connect matches by prefix.
+      // Remove once the mirror list is confirmed working from Render.
+      server.middlewares.use('/api/overpass/diag', async (_req, res) => {
+        const q = 'data=[out:json][timeout:25];(way["highway"~"^primary$"](30.26,-97.75,30.28,-97.73););out geom qt;';
+        const out = [];
+        for (const u of OVERPASS_UPSTREAMS) {
+          const t0 = Date.now();
+          try {
+            const r = await fetch(u, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: q,
+              signal: AbortSignal.timeout(25000),
+            });
+            out.push({ u, status: r.status, ms: Date.now() - t0 });
+          } catch (e) {
+            out.push({ u, error: String(e), ms: Date.now() - t0 });
+          }
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(out, null, 2));
+      });
+
       server.middlewares.use('/api/overpass', async (req, res) => {
         // Hoisted out of the try so the catch's serve-stale lookup can see it
         // (a body-read failure would otherwise hit an out-of-scope reference).
