@@ -187,13 +187,14 @@ const OVERPASS_BOUNDARY_DISK_TTL_MS = 30 * 86_400_000;
 /** Disk-cache directory for Overpass responses. */
 const OVERPASS_DISK_DIR = path.join(process.cwd(), '.gev-cache', 'overpass');
 /**
- * Per-upstream fetch timeout (ms). Lowered from 22 s on 2026-09-02: a mirror
- * that throttles our datacenter egress IP hangs to this ceiling, and at 22 s
- * two hung mirrors (44 s) blew past the fronting proxy's request budget before
- * a healthy mirror was ever reached. A responsive mirror answers in <7 s, so
- * 8 s fails over fast while still tolerating a cold community instance.
+ * Per-upstream fetch timeout (ms). Restored to 25 s on 2026-09-03: this proxy
+ * is dev-only now (production goes browser-direct), so the fast-failover
+ * rationale for the brief 8 s value no longer applies — and 8 s wrongly
+ * ABORTED legitimate slow responses on localhost when a public mirror was
+ * merely busy (the Overpass QL itself carries a 25 s server-side timeout, so
+ * the client ceiling must meet it). A responsive mirror still answers in <7 s.
  */
-const OVERPASS_TIMEOUT_MS = 8000;
+const OVERPASS_TIMEOUT_MS = 25000;
 /** Max entries in the Overpass response cache (LRU-like, oldest evicted first). */
 const OVERPASS_CACHE_MAX_ENTRIES = 120;
 /** @type {Map<string,{status:number,body:string,contentType:string,endpoint:string,cachedAt:number}>} */

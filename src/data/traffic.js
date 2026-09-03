@@ -61,8 +61,14 @@ const OVERPASS_DIRECT_MIRRORS = [
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
 ];
-/** @const {number} Per-mirror timeout (ms) for the browser-direct road fetch. */
-const OVERPASS_DIRECT_TIMEOUT_MS = 12000;
+/**
+ * @const {number} Per-mirror timeout (ms) for the browser-direct road fetch.
+ * The Overpass QL carries a 25 s server-side timeout, so a busy-but-healthy
+ * mirror can legitimately take >12 s; too tight a ceiling aborts a real
+ * response. A camera move cancels the fetch anyway, so this only fully elapses
+ * when the user holds still while a mirror is slow.
+ */
+const OVERPASS_DIRECT_TIMEOUT_MS = 18000;
 /** @const {number} Meters — hide all traffic dots above this camera altitude */
 const ACTIVATION_ALTITUDE = 8000;
 /** @const {number} Meters — above this altitude, only major roads are fetched */
