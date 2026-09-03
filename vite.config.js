@@ -153,25 +153,17 @@ function isOpenSkyUpstreamDisabled() {
 // ---------------------------------------------------------------------------
 /** Ordered list of Overpass API mirrors; tried sequentially on failure/rate-limit. */
 const OVERPASS_UPSTREAMS = [
-  // Reordered 2026-09-02 for the Render deploy. Diagnosed from Render's egress
-  // IP: overpass-api.de + lz4 return ECONNREFUSED (they hard-ban datacenter
-  // IPs — not a throttle), overpass.osm.jp's TLS cert is expired, kumi.systems
-  // is dead, and private.coffee accepts the IP but is globally flaky
-  // (500/502/timeout). CRITICAL: overpass.osm.ch answers 200 fast but is a
-  // EUROPE-ONLY instance — it returns an EMPTY result set outside Europe
-  // (Austin → 272-byte empty envelope), which read on the site as "ON but no
-  // dots". Worse, an empty 200 counts as success here and would be CACHED for
-  // 24 h (7 days on disk), poisoning every non-Europe view — so osm.ch is
-  // removed entirely, not kept as a fallback.
-  // overpass.openstreetmap.fr (OSM France — full planet, a different operator
-  // from the banned overpass-api.de) leads: full-planet, fast (~1.6 s, 198
-  // Austin ways, stable across retries). private.coffee (full-planet but
-  // globally flaky) is the next fallback; the banned mainline instances stay
-  // last as a cheap ~350 ms ECONNREFUSED fallthrough if the ban ever lifts.
-  'https://overpass.openstreetmap.fr/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://lz4.overpass-api.de/api/interpreter',
+  // This proxy is now a DEV-ONLY path: production fetches road geometry
+  // browser-direct (see OVERPASS_DIRECT_MIRRORS in src/data/traffic.js),
+  // because the hosted backend's datacenter IP is banned by every full-planet
+  // public mirror (2026-09-02 diagnosis: overpass-api.de/lz4 → ECONNREFUSED,
+  // openstreetmap.fr → 403 whitelist-only, osm.ch → Europe-only empty, kumi /
+  // osm.jp → dead, private.coffee → flaky). Locally the dev server runs on a
+  // residential IP, where overpass-api.de works, so it leads here. Full-planet
+  // mirrors only — a partial mirror (e.g. osm.ch) would cache empty results.
   'https://overpass-api.de/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ];
 /**
  * TTL for FRESH cached Overpass responses (ms). Road geometry is static for
@@ -2618,7 +2610,10 @@ async function fetchOverpassPayload(body, maxResponseBytes = OVERPASS_MAX_RESPON
         lastError = new Error(`Overpass runtime error (${endpoint})`);
         continue;
       }
-      if (status >= 500) {
+      // Any non-2xx (403 "white-listed usages only", 404, 5xx, …) is a mirror
+      // failure — fall through to the next rather than returning/caching it.
+      // (Previously only >= 500 was skipped, so a 403 was cached as "success".)
+      if (status < 200 || status >= 300) {
         lastError = new Error(`Overpass upstream returned ${status} (${endpoint})`);
         continue;
       }

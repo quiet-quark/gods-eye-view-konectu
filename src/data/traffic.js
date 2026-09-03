@@ -41,8 +41,28 @@ import { holdContinuousRender, releaseContinuousRender } from '../renderGovernor
  * @module data/traffic
  */
 
-/** @const {string} Proxy endpoint for Overpass API queries */
+/** @const {string} Local dev proxy endpoint for Overpass API queries. */
 const OVERPASS_URL = '/api/overpass';
+/**
+ * Public Overpass mirrors queried DIRECTLY from the browser in production.
+ *
+ * The hosted backend (Render) shares one datacenter egress IP that the public
+ * Overpass mirrors hard-ban (ECONNREFUSED) — so proxying road geometry through
+ * it returns nothing and the map shows "ON" with 0% coverage and no dots. The
+ * browser's own residential IP is NOT banned (that is exactly why localhost
+ * works), so in production we fetch road geometry client-side, straight from
+ * these mirrors, and fall through the list on failure. All three send
+ * `Access-Control-Allow-Origin: *`, so cross-origin browser POSTs succeed.
+ * Road geometry needs no API key; TomTom live flow still goes via the proxy.
+ * @const {string[]}
+ */
+const OVERPASS_DIRECT_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+/** @const {number} Per-mirror timeout (ms) for the browser-direct road fetch. */
+const OVERPASS_DIRECT_TIMEOUT_MS = 12000;
 /** @const {number} Meters — hide all traffic dots above this camera altitude */
 const ACTIVATION_ALTITUDE = 8000;
 /** @const {number} Meters — above this altitude, only major roads are fetched */
@@ -453,6 +473,54 @@ function buildOverpassQuery(south, west, north, east, { majorOnly = false, timeo
 }
 
 /**
+ * Fetch road geometry straight from public Overpass mirrors (browser-direct).
+ *
+ * Used in production: the hosted proxy's shared datacenter IP is banned by the
+ * mirrors, but the user's own browser IP is not. Tries each mirror in order,
+ * with a per-mirror timeout, and falls through to the next on any HTTP error,
+ * timeout, or network failure. A cancellation from the caller's `signal`
+ * (camera moved) is propagated immediately rather than treated as a mirror
+ * failure, so we don't waste a request on the next mirror for a stale load.
+ *
+ * @param {string} body - URL-encoded `data=<overpass QL>` request body.
+ * @param {AbortSignal} [signal] - Caller abort signal (superseded loads).
+ * @returns {Promise<Object>} Parsed Overpass JSON.
+ * @throws {Error} If every mirror fails (or AbortError if superseded).
+ */
+async function fetchRoadsDirect(body, signal) {
+  let lastError = null;
+  for (const url of OVERPASS_DIRECT_MIRRORS) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => ctrl.abort(), OVERPASS_DIRECT_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: ctrl.signal,
+      });
+      if (!response.ok) {
+        lastError = new Error(`Overpass mirror ${url} returned ${response.status}`);
+        continue;
+      }
+      return await response.json();
+    } catch (err) {
+      // Real caller cancellation (camera moved): stop, don't try more mirrors.
+      if (signal?.aborted) throw err;
+      // Per-mirror timeout or network error — record and fall through.
+      lastError = err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+  throw lastError || new Error('All Overpass mirrors failed');
+}
+
+/**
  * Fetch road geometries from the Overpass API via the local proxy.
  *
  * Sends a POST with the query as form-encoded `data`. Supports
@@ -480,6 +548,15 @@ async function fetchRoads(
   trace = null,
 ) {
   const query = buildOverpassQuery(south, west, north, east, { majorOnly, timeoutSec });
+  const body = `data=${encodeURIComponent(query)}`;
+
+  // Production: the hosted proxy's datacenter IP is banned by the public
+  // Overpass mirrors, so query them directly from the browser (residential IP,
+  // un-banned). Dev keeps the local proxy for its caching/coalescing/timing.
+  if (!import.meta.env?.DEV) {
+    return fetchRoadsDirect(body, signal);
+  }
+
   const state = TRAFFIC_TIMING_ENABLED && trace
     ? trafficTimingPass(trace, majorOnly ? 'major' : 'full', 'proxy')
     : null;
@@ -493,7 +570,7 @@ async function fetchRoads(
   const response = await fetch(OVERPASS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
+    body,
     signal,
   });
 
